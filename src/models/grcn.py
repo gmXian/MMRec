@@ -340,4 +340,64 @@ class GRCN(GeneralRecommender):
         score_matrix = torch.matmul(temp_user_tensor, item_tensor.t())
         return score_matrix
 
+    def get_modalities(self):
+        modalities = []
+        if self.v_feat is not None:
+            modalities.append('visual')
+        if self.t_feat is not None:
+            modalities.append('textual')
+        return modalities
 
+    def get_modal_features(self, modality):
+        if modality == 'visual':
+            return self.v_feat
+        if modality == 'textual':
+            return self.t_feat
+        return None
+
+    def set_modal_features(self, modality, features):
+        if modality == 'visual':
+            self.v_feat = features
+            if hasattr(self, 'v_gcn'):
+                self.v_gcn.features = features
+        elif modality == 'textual':
+            self.t_feat = features
+            if hasattr(self, 't_gcn'):
+                self.t_gcn.features = features
+
+    def _run_cgcn(self, modality, features_override=None):
+        if modality == 'visual':
+            gcn = self.v_gcn
+        elif modality == 'textual':
+            gcn = self.t_gcn
+        else:
+            raise ValueError(f'Unknown modality: {modality}')
+
+        if isinstance(features_override, dict):
+            base = self.get_modal_features(modality).clone()
+            base[features_override['item_id']] = features_override['feature']
+            features_override = base
+
+        if features_override is None:
+            return gcn(self.edge_index)
+        original = gcn.features
+        gcn.features = features_override
+        try:
+            return gcn(self.edge_index)
+        finally:
+            gcn.features = original
+
+    def encode_item_feature(self, modality, item_ids, feature_override=None):
+        output, _ = self._run_cgcn(modality, features_override=feature_override)
+        return output[item_ids + self.n_users]
+
+    def get_user_item_embeddings(self, modality, user_ids, item_ids):
+        output, _ = self._run_cgcn(modality)
+        return output[user_ids], output[item_ids + self.n_users]
+
+    def get_fused_embeddings(self):
+        output = self.forward()
+        return output[:self.n_users], output[self.n_users:]
+
+    def prepare_full_sort(self):
+        self.forward()

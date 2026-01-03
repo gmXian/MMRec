@@ -50,6 +50,27 @@ class AbstractRecommender(nn.Module):
             shape: [n_batch_users * n_candidate_items]
         """
         raise NotImplementedError
+
+    def get_modalities(self):
+        return []
+
+    def get_modal_features(self, modality):
+        raise NotImplementedError
+
+    def set_modal_features(self, modality, features):
+        raise NotImplementedError
+
+    def get_user_item_embeddings(self, modality, user_ids, item_ids):
+        raise NotImplementedError
+
+    def encode_item_feature(self, modality, item_ids, feature_override=None):
+        raise NotImplementedError
+
+    def get_fused_embeddings(self):
+        raise NotImplementedError
+
+    def prepare_full_sort(self):
+        return None
     #
     # def __str__(self):
     #     """
