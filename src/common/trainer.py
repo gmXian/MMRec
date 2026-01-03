@@ -159,6 +159,13 @@ class Trainer(AbstractTrainer):
             else:
                 loss = losses
                 total_loss = losses.item() if total_loss is None else total_loss + losses.item()
+            if self.config['defense'] and self.config['defense'].get('enable', False):
+                from common.defense.modality_balancing import ModalityBalancing
+                defense = ModalityBalancing(self.config, self.model)
+                balance_loss = defense.apply_modality_balancing_step(interaction)
+                if balance_loss is not None:
+                    lambda_weight = float(self.config['defense'].get('lambda', 0.0))
+                    loss = loss + lambda_weight * balance_loss
             if self._check_nan(loss):
                 self.logger.info('Loss is nan at epoch: {}, batch index: {}. Exiting.'.format(epoch_idx, batch_idx))
                 return loss, torch.tensor(0.0)
@@ -193,7 +200,7 @@ class Trainer(AbstractTrainer):
             #    break
         return total_loss, loss_batches
 
-    def _valid_epoch(self, valid_data):
+    def _valid_epoch(self, valid_data, is_test=False):
         r"""Valid the model with valid data
 
         Args:
@@ -203,7 +210,7 @@ class Trainer(AbstractTrainer):
             float: valid score
             dict: valid result
         """
-        valid_result = self.evaluate(valid_data)
+        valid_result = self.evaluate(valid_data, is_test=is_test)
         valid_score = valid_result[self.valid_metric] if self.valid_metric else valid_result['NDCG@20']
         return valid_score, valid_result
 
@@ -259,7 +266,7 @@ class Trainer(AbstractTrainer):
             # eval: To ensure the test result is the best model under validation data, set self.eval_step == 1
             if (epoch_idx + 1) % self.eval_step == 0:
                 valid_start_time = time()
-                valid_score, valid_result = self._valid_epoch(valid_data)
+                valid_score, valid_result = self._valid_epoch(valid_data, is_test=False)
                 self.best_valid_score, self.cur_step, stop_flag, update_flag = early_stopping(
                     valid_score, self.best_valid_score, self.cur_step,
                     max_step=self.stopping_step, bigger=self.valid_metric_bigger)
@@ -268,7 +275,7 @@ class Trainer(AbstractTrainer):
                                      (epoch_idx, valid_end_time - valid_start_time, valid_score)
                 valid_result_output = 'valid result: \n' + dict2str(valid_result)
                 # test
-                _, test_result = self._valid_epoch(test_data)
+                _, test_result = self._valid_epoch(test_data, is_test=True)
                 if verbose:
                     self.logger.info(valid_score_output)
                     self.logger.info(valid_result_output)
@@ -290,7 +297,7 @@ class Trainer(AbstractTrainer):
 
 
     @torch.no_grad()
-    def evaluate(self, eval_data, is_test=False, idx=0):
+    def evaluate(self, eval_data, is_test=False, idx=0, apply_attack=True):
         r"""Evaluate the model based on the eval data.
         Returns:
             dict: eval result, key is the eval metric and value in the corresponding metric value
@@ -308,7 +315,16 @@ class Trainer(AbstractTrainer):
             # rank and get top-k
             _, topk_index = torch.topk(scores, max(self.config['topk']), dim=-1)  # nusers x topk
             batch_matrix_list.append(topk_index)
-        return self.evaluator.evaluate(batch_matrix_list, eval_data, is_test=is_test, idx=idx)
+        result = self.evaluator.evaluate(batch_matrix_list, eval_data, is_test=is_test, idx=idx)
+
+        if apply_attack and is_test and self.config['attack'] and self.config['attack'].get('enable', False):
+            from common.defense.modality_balancing import ModalityBalancing
+            defense = ModalityBalancing(self.config, self.model)
+            attack_results = defense.evaluate_attack(self, eval_data)
+            for modality, metrics in attack_results.items():
+                self.logger.info('attack[%s] result: \n%s', modality, dict2str(metrics))
+
+        return result
 
     def plot_train_loss(self, show=True, save_path=None):
         r"""Plot the train loss in each epoch
@@ -329,4 +345,3 @@ class Trainer(AbstractTrainer):
             plt.show()
         if save_path:
             plt.savefig(save_path)
-

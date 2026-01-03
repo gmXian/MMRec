@@ -30,19 +30,31 @@ class VBPR(GeneralRecommender):
         # define layers and loss
         self.u_embedding = nn.Parameter(nn.init.xavier_uniform_(torch.empty(self.n_users, self.u_embedding_size * 2)))
         self.i_embedding = nn.Parameter(nn.init.xavier_uniform_(torch.empty(self.n_items, self.i_embedding_size)))
+        self._build_item_features()
+        self.item_linear = nn.Linear(self.item_raw_features.shape[1], self.i_embedding_size)
+        self.v_linear = None
+        self.t_linear = None
+        self.user_v_proj = None
+        self.user_t_proj = None
+        if self.v_feat is not None:
+            self.v_linear = nn.Linear(self.v_feat.shape[1], self.i_embedding_size)
+            self.user_v_proj = nn.Linear(self.u_embedding_size * 2, self.i_embedding_size)
+        if self.t_feat is not None:
+            self.t_linear = nn.Linear(self.t_feat.shape[1], self.i_embedding_size)
+            self.user_t_proj = nn.Linear(self.u_embedding_size * 2, self.i_embedding_size)
+        self.loss = BPRLoss()
+        self.reg_loss = EmbLoss()
+
+        # parameters initialization
+        self.apply(xavier_normal_initialization)
+
+    def _build_item_features(self):
         if self.v_feat is not None and self.t_feat is not None:
             self.item_raw_features = torch.cat((self.t_feat, self.v_feat), -1)
         elif self.v_feat is not None:
             self.item_raw_features = self.v_feat
         else:
             self.item_raw_features = self.t_feat
-
-        self.item_linear = nn.Linear(self.item_raw_features.shape[1], self.i_embedding_size)
-        self.loss = BPRLoss()
-        self.reg_loss = EmbLoss()
-
-        # parameters initialization
-        self.apply(xavier_normal_initialization)
 
     def get_user_embedding(self, user):
         r""" Get a batch of user embedding tensor according to input user's id.
@@ -104,3 +116,53 @@ class VBPR(GeneralRecommender):
         all_item_e = item_embeddings
         score = torch.matmul(user_e, all_item_e.transpose(0, 1))
         return score
+
+    def get_modalities(self):
+        modalities = []
+        if self.v_feat is not None:
+            modalities.append('visual')
+        if self.t_feat is not None:
+            modalities.append('textual')
+        return modalities
+
+    def get_modal_features(self, modality):
+        if modality == 'visual':
+            return self.v_feat
+        if modality == 'textual':
+            return self.t_feat
+        return None
+
+    def set_modal_features(self, modality, features):
+        if modality == 'visual':
+            self.v_feat = features
+        elif modality == 'textual':
+            self.t_feat = features
+        self._build_item_features()
+
+    def encode_item_feature(self, modality, item_ids, feature_override=None):
+        if modality == 'visual':
+            features = feature_override if feature_override is not None else self.v_feat[item_ids]
+            if isinstance(features, dict):
+                features = features['feature']
+            return self.v_linear(features)
+        if modality == 'textual':
+            features = feature_override if feature_override is not None else self.t_feat[item_ids]
+            if isinstance(features, dict):
+                features = features['feature']
+            return self.t_linear(features)
+        raise ValueError(f'Unknown modality: {modality}')
+
+    def get_user_item_embeddings(self, modality, user_ids, item_ids):
+        if modality == 'visual':
+            user_emb = self.user_v_proj(self.u_embedding[user_ids])
+            item_emb = self.encode_item_feature(modality, item_ids)
+            return user_emb, item_emb
+        if modality == 'textual':
+            user_emb = self.user_t_proj(self.u_embedding[user_ids])
+            item_emb = self.encode_item_feature(modality, item_ids)
+            return user_emb, item_emb
+        raise ValueError(f'Unknown modality: {modality}')
+
+    def get_fused_embeddings(self):
+        user_embeddings, item_embeddings = self.forward()
+        return user_embeddings, item_embeddings

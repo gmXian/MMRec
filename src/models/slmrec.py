@@ -82,27 +82,16 @@ class SLMRec(GeneralRecommender):
             if self.t_feat is not None:
                 self.t_dense_emb = self.t_dense(self.t_feat)  # t=>id
 
-        def compute_graph(u_emb, i_emb):
-            all_emb = torch.cat([u_emb, i_emb])
-            embs = [all_emb]
-            g_droped = self.norm_adj
-            for _ in range(self.n_layers):
-                all_emb = torch.sparse.mm(g_droped, all_emb)
-                embs.append(all_emb)
-            embs = torch.stack(embs, dim=1)
-            light_out = torch.mean(embs, dim=1)
-            return light_out
-
-        self.i_emb = compute_graph(users_emb, items_emb)
+        self.i_emb = self._compute_graph(users_emb, items_emb)
         self.i_emb_u, self.i_emb_i = torch.split(self.i_emb, [self.num_users, self.num_items])
-        self.v_emb = compute_graph(users_emb, self.v_dense_emb)
+        self.v_emb = self._compute_graph(users_emb, self.v_dense_emb)
         self.v_emb_u, self.v_emb_i = torch.split(self.v_emb, [self.num_users, self.num_items])
         if self.config["dataset"] != "kwai":
             if self.a_feat is not None:
-                self.a_emb = compute_graph(users_emb, self.a_dense_emb)
+                self.a_emb = self._compute_graph(users_emb, self.a_dense_emb)
                 self.a_emb_u, self.a_emb_i = torch.split(self.a_emb, [self.num_users, self.num_items])
             if self.t_feat is not None:
-                self.t_emb = compute_graph(users_emb, self.t_dense_emb)
+                self.t_emb = self._compute_graph(users_emb, self.t_dense_emb)
                 self.t_emb_u, self.t_emb_i = torch.split(self.t_emb, [self.num_users, self.num_items])
 
         # multi - modal features fusion
@@ -116,6 +105,38 @@ class SLMRec(GeneralRecommender):
             item = self.embedding_item_after_GCN(self.mm_fusion([self.i_emb_i, self.v_emb_i, self.t_emb_i]))
 
         return user, item
+
+    def _compute_graph(self, u_emb, i_emb):
+        all_emb = torch.cat([u_emb, i_emb])
+        embs = [all_emb]
+        g_droped = self.norm_adj
+        for _ in range(self.n_layers):
+            all_emb = torch.sparse.mm(g_droped, all_emb)
+            embs.append(all_emb)
+        embs = torch.stack(embs, dim=1)
+        light_out = torch.mean(embs, dim=1)
+        return light_out
+
+    def _compute_modality_embeddings(self, modality, feature_override=None):
+        users_emb = self.embedding_user.weight
+        if modality == 'visual':
+            features = feature_override if feature_override is not None else self.v_feat
+            if isinstance(features, dict):
+                base = self.v_feat.clone()
+                base[features['item_id']] = features['feature']
+                features = base
+            item_dense = self.v_dense(features)
+        elif modality == 'textual':
+            features = feature_override if feature_override is not None else self.t_feat
+            if isinstance(features, dict):
+                base = self.t_feat.clone()
+                base[features['item_id']] = features['feature']
+                features = base
+            item_dense = self.t_dense(features)
+        else:
+            raise ValueError(f'Unknown modality: {modality}')
+        modal_emb = self._compute_graph(users_emb, item_dense)
+        return torch.split(modal_emb, [self.num_users, self.num_items])
 
     def feature_dropout(self, users_idx, items_idx):
         users_emb = self.embedding_user.weight
@@ -306,6 +327,8 @@ class SLMRec(GeneralRecommender):
 
     def full_sort_predict(self, interaction, candidate_items=None):
         users = interaction[0]
+        if self.all_users is None or self.all_items is None:
+            self.all_users, self.all_items = self.compute()
         users_emb = self.all_users[users]
         if candidate_items is None:
             items_emb = self.all_items
@@ -335,6 +358,41 @@ class SLMRec(GeneralRecommender):
         main_loss = self.infonce(users, pos)
         ssl_loss = self.compute_ssl(users, pos)
         return main_loss + self.config['ssl_alpha'] * ssl_loss
+
+    def get_modalities(self):
+        modalities = []
+        if self.v_feat is not None:
+            modalities.append('visual')
+        if self.t_feat is not None:
+            modalities.append('textual')
+        return modalities
+
+    def get_modal_features(self, modality):
+        if modality == 'visual':
+            return self.v_feat
+        if modality == 'textual':
+            return self.t_feat
+        return None
+
+    def set_modal_features(self, modality, features):
+        if modality == 'visual':
+            self.v_feat = features
+        elif modality == 'textual':
+            self.t_feat = features
+
+    def encode_item_feature(self, modality, item_ids, feature_override=None):
+        _, item_embeds = self._compute_modality_embeddings(modality, feature_override=feature_override)
+        return item_embeds[item_ids]
+
+    def get_user_item_embeddings(self, modality, user_ids, item_ids):
+        user_embeds, item_embeds = self._compute_modality_embeddings(modality)
+        return user_embeds[user_ids], item_embeds[item_ids]
+
+    def get_fused_embeddings(self):
+        return self.compute()
+
+    def prepare_full_sort(self):
+        self.all_users, self.all_items = self.compute()
 
     def ssl_loss(self, users, pos):
         # compute ssl loss
@@ -477,4 +535,3 @@ class SLMRec(GeneralRecommender):
             print('use the mean adjacency matrix')
 
         return adj_matrix
-
