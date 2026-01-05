@@ -14,7 +14,7 @@ import torch.nn.functional as F
 #from SAGEConv import SAGEConv
 #from GATConv import GATConv
 from torch_geometric.nn.conv import MessagePassing
-from torch_geometric.utils import add_self_loops, dropout_adj
+from torch_geometric.utils import add_self_loops, dropout_edge
 from torch_geometric.utils import remove_self_loops, add_self_loops, softmax
 
 from common.abstract_recommender import GeneralRecommender
@@ -225,7 +225,7 @@ class GRCN(GeneralRecommender):
         weight = None
         content_rep = None
         num_modal = 0
-        edge_index, _ = dropout_adj(self.edge_index, p=self.dropout)
+        edge_index, _ = dropout_edge(self.edge_index, p=self.dropout)
         #print('edge_index: ', edge_index)
 
         if self.v_feat is not None:
@@ -263,11 +263,11 @@ class GRCN(GeneralRecommender):
                     weight = torch.cat((weight, weight_t), dim=1)   
 
         if self.weight_mode == 'mean':
-        	weight = weight/num_modal
-
+            weight = weight/num_modal
+            
         elif self.weight_mode == 'max':
-        	weight, _ = torch.max(weight, dim=1)
-        	weight = weight.view(-1, 1)
+            weight, _ = torch.max(weight, dim=1)
+            weight = weight.view(-1, 1)
             
         elif self.weight_mode == 'confid':
             confidence = torch.cat((self.model_specific_conf[edge_index[0]], self.model_specific_conf[edge_index[1]]), dim=0)

@@ -163,12 +163,15 @@ class ModalityBalancing:
             return None
 
         delta = torch.zeros_like(features, requires_grad=True)
-        with override_modality_features(self.model, modality, features + delta):
-            user_embed, item_embed = self.model.get_fused_embeddings()
-            pos_scores = (user_embed[user_ids] * item_embed[pos_item_ids]).sum(dim=1)
-            neg_scores = (user_embed[user_ids] * item_embed[neg_item_ids]).sum(dim=1)
-            loss = -torch.mean(F.logsigmoid(pos_scores - neg_scores))
-            grad = torch.autograd.grad(loss, delta, retain_graph=False, create_graph=False)[0]
+        # trainer.evaluate runs under torch.no_grad(), so enable grad here to compute
+        # gradients w.r.t. the input perturbation delta.
+        with torch.enable_grad():
+            with override_modality_features(self.model, modality, features + delta):
+                user_embed, item_embed = self.model.get_fused_embeddings()
+                pos_scores = (user_embed[user_ids] * item_embed[pos_item_ids]).sum(dim=1)
+                neg_scores = (user_embed[user_ids] * item_embed[neg_item_ids]).sum(dim=1)
+                loss = -torch.mean(F.logsigmoid(pos_scores - neg_scores))
+                grad = torch.autograd.grad(loss, delta, retain_graph=False, create_graph=False)[0]
 
         grad_norm = grad.norm(p=2, dim=1, keepdim=True).clamp_min(1e-8)
         eps = eps_ratio * features.norm(p=2, dim=1, keepdim=True).clamp_min(1e-8)
