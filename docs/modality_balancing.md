@@ -98,3 +98,10 @@ python main.py --model GRCN --dataset baby --config_file configs/baby_grcn_modba
 
 - With `defense.enable=false`, training reproduces baseline behavior (clean metrics are unchanged).
 - With `defense.enable=true`, clean metrics remain stable (small or no regression), while attack metrics improve.
+
+
+```
+python main.py --model MMGCN --dataset baby --config_file configs/baby_mmgcn_modbal.yaml
+```
+
+

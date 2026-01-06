@@ -1,0 +1,22 @@
+model: MMGCN
+dataset: baby
+
+# defense settings
+# Baby: visual is sensitive, textual is robust
+
+defense:
+  enable: True
+  method: "modality_balancing"
+  sensitive_modality: "visual"
+  robust_modality: "textual"
+  lambda: 0.01
+  N: 20
+  distill_eps: 1.0
+  pgd_steps: 10
+  pgd_step_size: 0.1
+
+attack:
+  enable: True
+  eps_ratio: 0.05
+  mode: "fgsm_l2"
+  sample_size: 1024
