@@ -104,4 +104,6 @@ python main.py --model GRCN --dataset baby --config_file configs/baby_grcn_modba
 python main.py --model MMGCN --dataset baby --config_file configs/baby_mmgcn_modbal.yaml
 ```
 
-
+```
+python main.py --model VBPR --dataset baby --config_file configs/baby_vbpr_modbal.yaml
+```

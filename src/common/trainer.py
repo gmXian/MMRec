@@ -108,6 +108,27 @@ class Trainer(AbstractTrainer):
         self.alpha2 = config['alpha2']
         self.beta = config['beta']
 
+        # save model
+        self.checkpoint_dir = config['checkpoint_dir']
+        if not os.path.exists(self.checkpoint_dir):
+            os.makedirs(self.checkpoint_dir)
+        saved_model_file = '{}-{}.pth'.format(self.config['model'], get_local_time())
+        self.saved_model_file = os.path.join(self.checkpoint_dir, saved_model_file)
+    def _save_checkpoint(self, epoch):
+        r"""Store the model parameters information and training information.
+        Args:
+            epoch (int): the current epoch id
+        """
+        state = {
+            'config': self.config,
+            'epoch': epoch,
+            'cur_step': self.cur_step,
+            'best_valid_score': self.best_valid_score,
+            'state_dict': self.model.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+        }
+        torch.save(state, self.saved_model_file)
+
     def _build_optimizer(self):
         r"""Init the Optimizer
 
@@ -282,6 +303,9 @@ class Trainer(AbstractTrainer):
                     self.logger.info('test result: \n' + dict2str(test_result))
                 if update_flag:
                     update_output = '██ ' + self.config['model'] + '--Best validation results updated!!!'
+                    if saved:
+                        self._save_checkpoint(epoch_idx)
+                        update_output += '█ Model saved at: %s' % self.saved_model_file
                     if verbose:
                         self.logger.info(update_output)
                     self.best_valid_result = valid_result
